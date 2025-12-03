@@ -9,6 +9,7 @@ import (
 func main() {
 	internal.LoadConfig()
 	internal.InitLogger()
+	internal.InitProxyPool()
 	internal.StartVersionUpdater()
 
 	http.HandleFunc("/v1/models", internal.HandleModels)

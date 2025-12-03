@@ -10,6 +10,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o zai-proxy .
 
 FROM alpine:latest
 
+RUN apk add --no-cache ca-certificates
+
 WORKDIR /app
 
 COPY --from=builder /app/zai-proxy .

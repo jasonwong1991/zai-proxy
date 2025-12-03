@@ -134,11 +134,11 @@ func makeUpstreamRequest(token string, messages []Message, model string) (*http.
 	req.Header.Set("Referer", fmt.Sprintf("https://chat.z.ai/c/%s", uuid.New().String()))
 	req.Header.Set("User-Agent", uarand.GetRandom())
 
-	// LogDebug("[Request] URL: %s", url)
-	// LogDebug("[Request] Headers: %v", req.Header)
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(bodyBytes)), nil
+	}
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := DoRequestWithRetry(req)
 	if err != nil {
 		return nil, "", err
 	}

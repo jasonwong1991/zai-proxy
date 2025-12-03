@@ -1,0 +1,13 @@
+services:
+  zai-proxy:
+    image: ghcr.io/jasonwong1991/zai-proxy:latest
+    container_name: zai-proxy
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - LOG_LEVEL=info
+      # - PROXY_FILE=/app/proxies.txt
+    # volumes:
+    #   - ./proxies.txt:/app/proxies.txt:ro
