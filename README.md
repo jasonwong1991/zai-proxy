@@ -10,6 +10,7 @@ zai-proxy 是一个基于 Go 语言的代理服务，将 z.ai 网页聊天转换
 - 支持思考模式 (thinking)
 - 支持联网搜索模式 (search)
 - 支持多模态图片输入
+- 支持匿名 Token（免登录）
 - **自动生成签名**
 - **自动更新签名版本号**
 
@@ -29,17 +30,16 @@ go mod download
 go run main.go
 ```
 
-### Docker 部署
+### Docker 一键部署
 
 ```bash
-# 构建镜像
-docker build -t zai-proxy .
+docker run -d -p 8000:8000 ghcr.io/kao0312/zai-proxy:latest
+```
 
-# 运行容器
-docker run -p 8000:8000 zai-proxy
+自定义端口和日志级别：
 
-# 使用环境变量
-docker run -p 8000:8000 -e PORT=8080 -e LOG_LEVEL=debug zai-proxy
+```bash
+docker run -d -p 8080:8000 -e LOG_LEVEL=debug ghcr.io/kao0312/zai-proxy:latest
 ```
 
 ## 环境变量
@@ -50,6 +50,19 @@ docker run -p 8000:8000 -e PORT=8080 -e LOG_LEVEL=debug zai-proxy
 | LOG_LEVEL | 日志级别 | info |
 
 ## 获取 z.ai Token
+
+### 方式一：使用匿名 Token（免登录）
+
+直接使用 `free` 作为 API key，服务会自动获取一个匿名 token：
+
+```bash
+curl http://localhost:8000/v1/chat/completions \
+  -H "Authorization: Bearer free" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "GLM-4.6", "messages": [{"role": "user", "content": "hello"}]}'
+```
+
+### 方式二：使用个人 Token
 
 1. 登录 https://chat.z.ai
 2. 打开浏览器开发者工具 (F12)
@@ -64,6 +77,7 @@ docker run -p 8000:8000 -e PORT=8080 -e LOG_LEVEL=debug zai-proxy
 | GLM-4.5 | 0727-360B-API |
 | GLM-4.6 | GLM-4-6-API-V1 |
 | GLM-4.5-V | glm-4.5v |
+| GLM-4.6-V | glm-4.6v |
 | GLM-4.5-Air | 0727-106B-API |
 
 ### 模型标签

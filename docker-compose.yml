@@ -4,10 +4,10 @@ services:
     container_name: zai-proxy
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8084:8084"
     environment:
-      - PORT=8000
+      - PORT=8084
       - LOG_LEVEL=info
-      # - PROXY_FILE=/app/proxies.txt
+      - PROXY_FILE=/app/proxies.txt
     # volumes:
-    #   - ./proxies.txt:/app/proxies.txt:ro
+      - ./proxies.txt:/app/proxies.txt:ro
