@@ -9,5 +9,5 @@ services:
       - PORT=8084
       - LOG_LEVEL=info
       - PROXY_FILE=/app/proxies.txt
-    # volumes:
+    volumes:
       - ./proxies.txt:/app/proxies.txt:ro
