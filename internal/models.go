@@ -11,6 +11,7 @@ import (
 var BaseModelMapping = map[string]string{
 	"GLM-4.5":      "0727-360B-API",
 	"GLM-4.6":      "GLM-4-6-API-V1",
+	"GLM-4.7":      "glm-4.7",
 	"GLM-4.5-V":    "glm-4.5v",
 	"GLM-4.6-V":    "glm-4.6v",
 	"GLM-4.5-Air":  "0727-106B-API",
@@ -21,13 +22,14 @@ var BaseModelMapping = map[string]string{
 var ModelList = []string{
 	"GLM-4.5",
 	"GLM-4.6",
-	"GLM-4.5-thinking",
-	"GLM-4.6-thinking",
+	"GLM-4.7",
+	"GLM-4.7-thinking",
+	"GLM-4.7-thinking-search",
 	"GLM-4.5-V",
 	"GLM-4.6-V",
 	"GLM-4.6-V-thinking",
 	"GLM-4.5-Air",
-	"0808-360B-DR",
+	// "0808-360B-DR",
 }
 
 // 解析模型名称，提取基础模型名和标签
