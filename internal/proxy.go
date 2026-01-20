@@ -18,7 +18,7 @@ const (
 	healthCheckURL      = "https://chat.z.ai/"
 	healthCheckInterval = 30 * time.Second
 	healthCheckTimeout  = 8 * time.Second
-	proxyCooldown       = 60 * time.Second
+	proxyCooldown       = 24 * time.Hour
 	maxRetries          = 3
 )
 
