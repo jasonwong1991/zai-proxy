@@ -33,7 +33,60 @@ func extractAllImageURLs(messages []Message) []string {
 	return allImageURLs
 }
 
-func makeUpstreamRequest(token string, messages []Message, model string) (*http.Response, string, error) {
+// mergeSystemMessages 将所有 system 消息的文本合并到第一条 user 消息中，
+// 因为上游 z.ai 不支持 system 角色。
+func mergeSystemMessages(messages []Message) []Message {
+	var systemParts []string
+	var filtered []Message
+	for _, msg := range messages {
+		if msg.Role == "system" {
+			text, _ := msg.ParseContent()
+			if text != "" {
+				systemParts = append(systemParts, text)
+			}
+		} else {
+			filtered = append(filtered, msg)
+		}
+	}
+
+	if len(systemParts) == 0 {
+		return messages
+	}
+
+	systemText := strings.Join(systemParts, "\n")
+
+	for i, msg := range filtered {
+		if msg.Role == "user" {
+			text, imageURLs := msg.ParseContent()
+			newText := systemText + "\n\n" + text
+			if len(imageURLs) == 0 {
+				filtered[i].Content = newText
+			} else {
+				// 多模态消息：重建 content，将系统提示词加到文本前
+				var newContent []interface{}
+				newContent = append(newContent, map[string]interface{}{
+					"type": "text",
+					"text": newText,
+				})
+				for _, imgURL := range imageURLs {
+					newContent = append(newContent, map[string]interface{}{
+						"type": "image_url",
+						"image_url": map[string]interface{}{
+							"url": imgURL,
+						},
+					})
+				}
+				filtered[i].Content = newContent
+			}
+			return filtered
+		}
+	}
+
+	// 没有 user 消息，将系统提示词作为第一条 user 消息
+	return append([]Message{{Role: "user", Content: systemText}}, filtered...)
+}
+
+func makeUpstreamRequest(token string, messages []Message, model string, tools []Tool) (*http.Response, string, error) {
 	payload, err := DecodeJWTPayload(token)
 	if err != nil || payload == nil {
 		return nil, "", fmt.Errorf("invalid token")
@@ -49,6 +102,13 @@ func makeUpstreamRequest(token string, messages []Message, model string) (*http.
 	latestUserContent := extractLatestUserContent(messages)
 	imageURLs := extractAllImageURLs(messages)
 
+	// 上游不支持 system 角色，将系统提示词合并到第一条用户消息中
+	messages = mergeSystemMessages(messages)
+
+	enableThinking := IsThinkingModel(model)
+	autoWebSearch := IsSearchModel(model)
+	enableDeepSearch := IsDeepSearchModel(model)
+
 	signature := GenerateSignature(userID, requestID, latestUserContent, timestamp)
 
 	url := fmt.Sprintf("https://chat.z.ai/api/v2/chat/completions?timestamp=%d&requestId=%s&user_id=%s&version=0.0.1&platform=web&token=%s&current_url=%s&pathname=%s&signature_timestamp=%d",
@@ -57,15 +117,18 @@ func makeUpstreamRequest(token string, messages []Message, model string) (*http.
 		fmt.Sprintf("/c/%s", chatID),
 		timestamp)
 
-	enableThinking := IsThinkingModel(model)
-	autoWebSearch := IsSearchModel(model)
 	if targetModel == "glm-4.5v" || targetModel == "glm-4.6v" {
 		autoWebSearch = false
 	}
 
+	var flags []string
+
 	var mcpServers []string
 	if targetModel == "glm-4.6v" {
 		mcpServers = []string{"vlm-image-search", "vlm-image-recognition", "vlm-image-processing"}
+	}
+	if enableDeepSearch {
+		mcpServers = append(mcpServers, "advanced-search")
 	}
 
 	urlToFileID := make(map[string]string)
@@ -94,24 +157,48 @@ func makeUpstreamRequest(token string, messages []Message, model string) (*http.
 
 	var upstreamMessages []map[string]interface{}
 	for _, msg := range messages {
-		upstreamMessages = append(upstreamMessages, msg.ToUpstreamMessage(urlToFileID))
+		upstreamMsg := msg.ToUpstreamMessage(urlToFileID)
+		// tool 角色消息转换为 assistant 消息（上游不支持 tool role）
+		if msg.Role == "tool" {
+			upstreamMsg["role"] = "assistant"
+		}
+		upstreamMessages = append(upstreamMessages, upstreamMsg)
 	}
 
+	now := time.Now()
 	body := map[string]interface{}{
 		"stream":           true,
 		"model":            targetModel,
 		"messages":         upstreamMessages,
 		"signature_prompt": latestUserContent,
 		"params":           map[string]interface{}{},
+		"extra":            map[string]interface{}{},
 		"features": map[string]interface{}{
 			"image_generation": false,
 			"web_search":       false,
 			"auto_web_search":  autoWebSearch,
-			"preview_mode":     true,
+			"preview_mode":     enableThinking,
+			"flags":            flags,
 			"enable_thinking":  enableThinking,
 		},
-		"chat_id": chatID,
-		"id":      uuid.New().String(),
+		"variables": map[string]interface{}{
+			"{{USER_NAME}}":         payload.Email,
+			"{{USER_LOCATION}}":     "Unknown",
+			"{{CURRENT_DATETIME}}":  now.Format("2006-01-02 15:04:05"),
+			"{{CURRENT_DATE}}":      now.Format("2006-01-02"),
+			"{{CURRENT_TIME}}":      now.Format("15:04:05"),
+			"{{CURRENT_WEEKDAY}}":   now.Weekday().String(),
+			"{{CURRENT_TIMEZONE}}":  "Asia/Shanghai",
+			"{{USER_LANGUAGE}}":     "zh-CN",
+		},
+		"chat_id":                      chatID,
+		"id":                           uuid.New().String(),
+		"current_user_message_id":      userMsgID,
+		"current_user_message_parent_id": nil,
+		"background_tasks": map[string]interface{}{
+			"title_generation": true,
+			"tags_generation":  true,
+		},
 	}
 
 	if len(mcpServers) > 0 {
@@ -120,8 +207,10 @@ func makeUpstreamRequest(token string, messages []Message, model string) (*http.
 
 	if len(filesData) > 0 {
 		body["files"] = filesData
-		body["current_user_message_id"] = userMsgID
 	}
+
+	// 注意：z.ai 不支持 OpenAI 格式的 tools 字段，发送会导致空响应
+	// 客户端传入的 tools 仅用于接口兼容，不转发给上游
 
 	bodyBytes, _ := json.Marshal(body)
 
@@ -284,10 +373,10 @@ func HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Model == "" {
-		req.Model = "GLM-4.6"
+		req.Model = "GLM-5"
 	}
 
-	resp, modelName, err := makeUpstreamRequest(token, req.Messages, req.Model)
+	resp, modelName, err := makeUpstreamRequest(token, req.Messages, req.Model, req.Tools)
 	if err != nil {
 		LogError("Upstream request failed: %v", err)
 		http.Error(w, "Upstream error", http.StatusBadGateway)
