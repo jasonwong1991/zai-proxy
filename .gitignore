@@ -1,3 +1,8 @@
 .env
 *.exe
 *.cmd
+*.txt
+*.png
+zai-proxy
+zai-proxy-test
+deno.ts
