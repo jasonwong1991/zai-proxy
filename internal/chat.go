@@ -387,11 +387,7 @@ func HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		bodyStr := string(body)
-		if len(bodyStr) > 500 {
-			bodyStr = bodyStr[:500]
-		}
-		LogError("Upstream error: status=%d, body=%s", resp.StatusCode, bodyStr)
+		LogError("[OpenAI] Upstream error: status=%d, body=%s", resp.StatusCode, string(body))
 		http.Error(w, "Upstream error", resp.StatusCode)
 		return
 	}

@@ -310,11 +310,8 @@ func HandleAnthropicMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hasTools := len(req.Tools) > 0
-	LogInfo("[Anthropic] model=%s, hasTools=%v, toolCount=%d, messageCount=%d, stream=%v",
-		chatReq.Model, hasTools, len(req.Tools), len(chatReq.Messages), req.Stream)
-	if hasTools {
-		LogInfo("[Anthropic] TRIGGER_SIGNAL=%s", TriggerSignal)
-	}
+	LogInfo("[Anthropic] model=%s, hasTools=%v, toolCount=%d, stream=%v",
+		chatReq.Model, hasTools, len(req.Tools), req.Stream)
 
 	resp, modelName, err := makeUpstreamRequest(token, chatReq.Messages, chatReq.Model, nil)
 	if err != nil {
@@ -334,11 +331,7 @@ func HandleAnthropicMessages(w http.ResponseWriter, r *http.Request) {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		bodyStr := string(body)
-		if len(bodyStr) > 500 {
-			bodyStr = bodyStr[:500]
-		}
-		LogError("Upstream error: status=%d, body=%s", resp.StatusCode, bodyStr)
+		LogError("[Anthropic] Upstream error: status=%d, body=%s", resp.StatusCode, string(body))
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -490,22 +483,9 @@ func handleAnthropicNonStreamResponse(w http.ResponseWriter, body io.ReadCloser,
 	// Extract tool calls from content if tools were requested
 	var parsedToolCalls []ParsedToolCall
 	if hasTools {
-		LogInfo("[Anthropic-NonStream] Full content length=%d", len(fullContent))
-		LogInfo("[Anthropic-NonStream] Contains trigger? %v, contains <function_calls>? %v",
-			strings.Contains(fullContent, TriggerSignal), strings.Contains(fullContent, "<function_calls>"))
-		tail := fullContent
-		if len(tail) > 500 {
-			tail = tail[len(tail)-500:]
-		}
-		LogInfo("[Anthropic-NonStream] Content tail (last 500): %s", tail)
-
 		parsedToolCalls = ParseFunctionCallsXML(fullContent)
-		LogInfo("[Anthropic-NonStream] Parsed tool calls: %d", len(parsedToolCalls))
-		for _, tc := range parsedToolCalls {
-			LogInfo("[Anthropic-NonStream] Tool call: name=%s, argsLen=%d", tc.Name, len(tc.Arguments))
-		}
+		LogDebug("[Anthropic-NonStream] Parsed %d tool calls from content (len=%d)", len(parsedToolCalls), len(fullContent))
 		if pos := FindTriggerSignalPosition(fullContent); pos >= 0 {
-			LogInfo("[Anthropic-NonStream] Trigger position: %d", pos)
 			fullContent = strings.TrimSpace(fullContent[:pos])
 		}
 	}
@@ -542,6 +522,7 @@ func handleAnthropicNonStreamResponse(w http.ResponseWriter, body io.ReadCloser,
 
 	// If no content blocks at all, add empty text block
 	if len(contentBlocks) == 0 {
+		LogWarn("[Anthropic-NonStream] Response 200 but no content received")
 		contentBlocks = append(contentBlocks, ContentBlock{
 			Type: "text",
 			Text: "",
@@ -885,28 +866,14 @@ func handleAnthropicStreamResponse(w http.ResponseWriter, body io.ReadCloser, me
 	// Parse buffered content for tool calls when tools are present
 	if hasTools && len(toolContentBuffer) > 0 {
 		bufferedContent := strings.Join(toolContentBuffer, "")
-		LogInfo("[Anthropic-Stream] Tool buffer complete: totalLen=%d, chunks=%d", len(bufferedContent), len(toolContentBuffer))
-		LogInfo("[Anthropic-Stream] TRIGGER_SIGNAL=%s", TriggerSignal)
-		LogInfo("[Anthropic-Stream] Buffer contains trigger? %v", strings.Contains(bufferedContent, TriggerSignal))
-		LogInfo("[Anthropic-Stream] Buffer contains <function_calls>? %v", strings.Contains(bufferedContent, "<function_calls>"))
-		tail := bufferedContent
-		if len(tail) > 500 {
-			tail = tail[len(tail)-500:]
-		}
-		LogInfo("[Anthropic-Stream] Buffer tail (last 500): %s", tail)
 
 		allToolCalls = ParseFunctionCallsXML(bufferedContent)
-		LogInfo("[Anthropic-Stream] Parsed tool calls count: %d", len(allToolCalls))
-		for _, tc := range allToolCalls {
-			LogInfo("[Anthropic-Stream] Tool call: name=%s, argsLen=%d", tc.Name, len(tc.Arguments))
-		}
+		LogDebug("[Anthropic-Stream] Parsed %d tool calls from buffer (len=%d)", len(allToolCalls), len(bufferedContent))
 		textContent := bufferedContent
 		if pos := FindTriggerSignalPosition(bufferedContent); pos >= 0 {
-			LogInfo("[Anthropic-Stream] Trigger signal position: %d", pos)
 			textContent = strings.TrimSpace(bufferedContent[:pos])
 		}
 		if textContent != "" {
-			LogInfo("[Anthropic-Stream] Emitting text content, len=%d", len(textContent))
 			sendTextDelta(textContent)
 			outputTokens += len(textContent) / 4
 		}
@@ -922,10 +889,12 @@ func handleAnthropicStreamResponse(w http.ResponseWriter, body io.ReadCloser, me
 		textBlockStarted = false
 	} else {
 		stopThinkingBlock()
+		if !thinkingBlockStarted {
+			LogWarn("[Anthropic-Stream] Response 200 but no content received")
+		}
 	}
 
 	// Emit tool_use content blocks
-	LogInfo("[Anthropic-Stream] Emitting %d tool_use blocks", len(allToolCalls))
 	for i, tc := range allToolCalls {
 		toolID := fmt.Sprintf("toolu_%s_%d", uuid.New().String()[:8], i)
 
@@ -968,7 +937,7 @@ func handleAnthropicStreamResponse(w http.ResponseWriter, body io.ReadCloser, me
 	if len(allToolCalls) > 0 {
 		stopReason = "tool_use"
 	}
-	LogInfo("[Anthropic-Stream] Final: stopReason=%s, outputTokens=%d, toolCallsCount=%d", stopReason, outputTokens, len(allToolCalls))
+	LogInfo("[Anthropic-Stream] stopReason=%s, toolCalls=%d", stopReason, len(allToolCalls))
 
 	// Send message_delta with stop_reason
 	writeEvent("message_delta", map[string]interface{}{

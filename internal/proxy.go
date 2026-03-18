@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -15,16 +14,12 @@ import (
 )
 
 const (
-	healthCheckURL      = "https://chat.z.ai/"
-	healthCheckInterval = 30 * time.Second
-	healthCheckTimeout  = 8 * time.Second
-	proxyCooldown       = 60 * time.Second
-	maxRetries          = 3
+	proxyCooldown = 60 * time.Second
+	maxRetries    = 3
 )
 
 var (
-	ErrProxyPoolDisabled = errors.New("proxy pool disabled")
-	ErrNoHealthyProxy    = errors.New("no healthy proxy available")
+	ErrNoHealthyProxy = errors.New("no healthy proxy available")
 
 	proxyPoolOnce sync.Once
 	proxyPool     *ProxyPool
@@ -32,25 +27,17 @@ var (
 
 type proxyNode struct {
 	url            *url.URL
-	raw            string
-	healthy        atomic.Bool
 	unhealthyUntil atomic.Int64
-	failCount      atomic.Int32
 }
 
 func (n *proxyNode) isHealthy() bool {
-	if !n.healthy.Load() {
-		return false
-	}
 	until := n.unhealthyUntil.Load()
 	return until == 0 || time.Now().UnixMilli() >= until
 }
 
 type ProxyPool struct {
-	nodes   []*proxyNode
-	cursor  atomic.Uint64
-	stopCh  chan struct{}
-	stopped atomic.Bool
+	nodes  []*proxyNode
+	cursor atomic.Uint64
 }
 
 type ProxyTicket struct {
@@ -77,30 +64,11 @@ func InitProxyPool() {
 	})
 }
 
-func GetProxyPool() *ProxyPool {
-	return proxyPool
-}
-
 func ProxyEnabled() bool {
 	return proxyPool != nil && len(proxyPool.nodes) > 0
 }
 
 func newProxyPool(filePath string) (*ProxyPool, error) {
-	nodes, err := loadProxyNodes(filePath)
-	if err != nil {
-		return nil, err
-	}
-
-	pool := &ProxyPool{
-		nodes:  nodes,
-		stopCh: make(chan struct{}),
-	}
-
-	go pool.healthCheckLoop()
-	return pool, nil
-}
-
-func loadProxyNodes(filePath string) ([]*proxyNode, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("open proxy file: %w", err)
@@ -135,12 +103,7 @@ func loadProxyNodes(filePath string) ([]*proxyNode, error) {
 			continue
 		}
 
-		node := &proxyNode{
-			url: parsed,
-			raw: line,
-		}
-		node.healthy.Store(true)
-		nodes = append(nodes, node)
+		nodes = append(nodes, &proxyNode{url: parsed})
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -151,90 +114,7 @@ func loadProxyNodes(filePath string) ([]*proxyNode, error) {
 		return nil, errors.New("no valid proxy nodes found")
 	}
 
-	return nodes, nil
-}
-
-func (p *ProxyPool) Close() {
-	if p.stopped.CompareAndSwap(false, true) {
-		close(p.stopCh)
-	}
-}
-
-func (p *ProxyPool) healthCheckLoop() {
-	p.runHealthChecks()
-
-	ticker := time.NewTicker(healthCheckInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			p.runHealthChecks()
-		case <-p.stopCh:
-			return
-		}
-	}
-}
-
-func (p *ProxyPool) runHealthChecks() {
-	var wg sync.WaitGroup
-	for _, node := range p.nodes {
-		wg.Add(1)
-		go func(n *proxyNode) {
-			defer wg.Done()
-			p.checkNode(n)
-		}(node)
-	}
-	wg.Wait()
-}
-
-func (p *ProxyPool) checkNode(node *proxyNode) {
-	transport := &http.Transport{
-		Proxy:                 http.ProxyURL(node.url),
-		DisableKeepAlives:     true,
-		TLSHandshakeTimeout:   healthCheckTimeout,
-		ResponseHeaderTimeout: healthCheckTimeout,
-	}
-
-	client := &http.Client{
-		Timeout:   healthCheckTimeout,
-		Transport: transport,
-	}
-
-	req, err := http.NewRequest(http.MethodGet, healthCheckURL, nil)
-	if err != nil {
-		return
-	}
-	req.Close = true
-
-	resp, err := client.Do(req)
-	if err != nil {
-		p.markUnhealthy(node, err)
-		return
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
-
-	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
-		p.markHealthy(node)
-	} else {
-		p.markUnhealthy(node, fmt.Errorf("status %d", resp.StatusCode))
-	}
-}
-
-func (p *ProxyPool) markHealthy(node *proxyNode) {
-	if !node.healthy.Load() || node.failCount.Load() > 0 {
-		LogInfo("Proxy %s recovered", node.url.Host)
-	}
-	node.healthy.Store(true)
-	node.unhealthyUntil.Store(0)
-	node.failCount.Store(0)
-}
-
-func (p *ProxyPool) markUnhealthy(node *proxyNode, err error) {
-	node.failCount.Add(1)
-	node.unhealthyUntil.Store(time.Now().Add(proxyCooldown).UnixMilli())
-	LogWarn("Proxy %s marked unhealthy (cooldown %s): %v", node.url.Host, proxyCooldown, err)
+	return &ProxyPool{nodes: nodes}, nil
 }
 
 func (p *ProxyPool) nextHealthy() (*proxyNode, error) {
@@ -255,17 +135,13 @@ func (p *ProxyPool) nextHealthy() (*proxyNode, error) {
 	return nil, ErrNoHealthyProxy
 }
 
-func (p *ProxyPool) Acquire(base *http.Transport) (*http.Transport, *ProxyTicket, error) {
-	node, err := p.nextHealthy()
-	if err != nil {
-		return nil, nil, err
-	}
+func (p *ProxyPool) markUnhealthy(node *proxyNode, err error) {
+	node.unhealthyUntil.Store(time.Now().Add(proxyCooldown).UnixMilli())
+	LogWarn("Proxy %s marked unhealthy (cooldown %s): %v", node.url.Host, proxyCooldown, err)
+}
 
-	transport := cloneTransport(base)
-	transport.Proxy = http.ProxyURL(node.url)
-
-	ticket := &ProxyTicket{pool: p, node: node}
-	return transport, ticket, nil
+func (p *ProxyPool) markHealthy(node *proxyNode) {
+	node.unhealthyUntil.Store(0)
 }
 
 func (t *ProxyTicket) Report(err error) {
@@ -286,31 +162,22 @@ func (t *ProxyTicket) ProxyHost() string {
 	return t.node.url.Host
 }
 
-func cloneTransport(base *http.Transport) *http.Transport {
-	if base == nil {
-		if def, ok := http.DefaultTransport.(*http.Transport); ok {
-			return def.Clone()
-		}
-		return &http.Transport{}
-	}
-	return base.Clone()
-}
-
 func AcquireHTTPClient() (*http.Client, *ProxyTicket) {
 	if proxyPool == nil {
 		return &http.Client{}, nil
 	}
 
-	transport, ticket, err := proxyPool.Acquire(nil)
+	node, err := proxyPool.nextHealthy()
 	if err != nil {
-		if !errors.Is(err, ErrNoHealthyProxy) {
-			LogWarn("Failed to acquire proxy: %v", err)
-		}
 		return &http.Client{}, nil
 	}
 
-	LogDebug("Using proxy: %s", ticket.ProxyHost())
-	return &http.Client{Transport: transport}, ticket
+	transport := &http.Transport{
+		Proxy: http.ProxyURL(node.url),
+	}
+
+	LogDebug("Using proxy: %s", node.url.Host)
+	return &http.Client{Transport: transport}, &ProxyTicket{pool: proxyPool, node: node}
 }
 
 func DoRequestWithRetry(req *http.Request) (*http.Response, error) {
