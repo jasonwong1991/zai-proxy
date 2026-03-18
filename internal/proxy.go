@@ -182,7 +182,7 @@ func AcquireHTTPClient() (*http.Client, *ProxyTicket) {
 
 func DoRequestWithRetry(req *http.Request) (*http.Response, error) {
 	if proxyPool == nil {
-		client := &http.Client{}
+		client := NewBrowserHTTPClient()
 		return client.Do(req)
 	}
 
@@ -210,6 +210,6 @@ func DoRequestWithRetry(req *http.Request) (*http.Response, error) {
 	}
 
 	LogWarn("All proxy attempts failed, trying direct connection")
-	client := &http.Client{}
+	client := NewBrowserHTTPClient()
 	return client.Do(req)
 }

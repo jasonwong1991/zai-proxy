@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	url_pkg "net/url"
 	"strings"
 	"time"
 
-	"github.com/corpix/uarand"
 	"github.com/google/uuid"
 )
 
@@ -86,6 +86,72 @@ func mergeSystemMessages(messages []Message) []Message {
 	return append([]Message{{Role: "user", Content: systemText}}, filtered...)
 }
 
+// createChat 调用 z.ai 的 /api/v1/chats/new 创建会话，返回 chat_id
+func createChat(token, model, msgID, content string, enableThinking, autoWebSearch bool, timestamp int64) (string, error) {
+	ts := timestamp / 1000 // 秒级时间戳
+	body := map[string]interface{}{
+		"chat": map[string]interface{}{
+			"id":     "",
+			"title":  "新聊天",
+			"models": []string{model},
+			"params": map[string]interface{}{},
+			"history": map[string]interface{}{
+				"messages": map[string]interface{}{
+					msgID: map[string]interface{}{
+						"id":          msgID,
+						"parentId":    nil,
+						"childrenIds": []string{},
+						"role":        "user",
+						"content":     content,
+						"timestamp":   ts,
+						"models":      []string{model},
+					},
+				},
+				"currentId": msgID,
+			},
+			"tags":             []string{},
+			"flags":            []string{},
+			"features":         []map[string]interface{}{{"type": "tool_selector", "server": "tool_selector_h", "status": "hidden"}},
+			"mcp_servers":      []string{},
+			"enable_thinking":  enableThinking,
+			"auto_web_search":  autoWebSearch,
+			"message_version":  1,
+			"extra":            map[string]interface{}{},
+			"timestamp":        timestamp,
+		},
+	}
+
+	bodyBytes, _ := json.Marshal(body)
+	req, err := http.NewRequest("POST", "https://chat.z.ai/api/v1/chats/new", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := NewBrowserHTTPClient()
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("create chat failed: status=%d, body=%s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	LogDebug("[CreateChat] Created chat: %s", result.ID)
+	return result.ID, nil
+}
+
 func makeUpstreamRequest(token string, messages []Message, model string, tools []Tool) (*http.Response, string, error) {
 	payload, err := DecodeJWTPayload(token)
 	if err != nil || payload == nil {
@@ -93,7 +159,6 @@ func makeUpstreamRequest(token string, messages []Message, model string, tools [
 	}
 
 	userID := payload.ID
-	chatID := uuid.New().String()
 	timestamp := time.Now().UnixMilli()
 	requestID := uuid.New().String()
 	userMsgID := uuid.New().String()
@@ -107,22 +172,49 @@ func makeUpstreamRequest(token string, messages []Message, model string, tools [
 
 	enableThinking := IsThinkingModel(model)
 	webSearch := IsSearchModel(model)      // 强制搜索：仅 -search / -deepsearch 模型开启
-	autoWebSearch := true                  // 智能搜索：始终开启，让模型自行判断是否需要搜索
+	autoWebSearch := false                 // 前端默认 false，让模型自行判断
 	enableDeepSearch := IsDeepSearchModel(model)
+
+	// 创建会话：z.ai 要求 chat_id 必须先通过 /api/v1/chats/new 创建
+	chatID, err := createChat(token, targetModel, userMsgID, latestUserContent, enableThinking, autoWebSearch, timestamp)
+	if err != nil {
+		LogWarn("Failed to create chat, using random ID: %v", err)
+		chatID = uuid.New().String()
+	}
 
 	signature := GenerateSignature(userID, requestID, latestUserContent, timestamp)
 
-	url := fmt.Sprintf("https://chat.z.ai/api/v2/chat/completions?timestamp=%d&requestId=%s&user_id=%s&version=0.0.1&platform=web&token=%s&current_url=%s&pathname=%s&signature_timestamp=%d",
-		timestamp, requestID, userID, token,
-		fmt.Sprintf("https://chat.z.ai/c/%s", chatID),
-		fmt.Sprintf("/c/%s", chatID),
-		timestamp)
+	chatURL := fmt.Sprintf("https://chat.z.ai/c/%s", chatID)
+	pathname := fmt.Sprintf("/c/%s", chatID)
+
+	urlParams := fmt.Sprintf("https://chat.z.ai/api/v2/chat/completions?timestamp=%d&requestId=%s&user_id=%s&version=0.0.1&platform=web&token=%s", timestamp, requestID, userID, token)
+	urlParams += "&user_agent=" + url_pkg.QueryEscape("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+	urlParams += "&language=zh-CN"
+	urlParams += "&languages=" + url_pkg.QueryEscape("zh-CN,zh")
+	urlParams += "&timezone=" + url_pkg.QueryEscape("Asia/Shanghai")
+	urlParams += "&cookie_enabled=true"
+	urlParams += "&screen_width=1920&screen_height=1080&screen_resolution=1920x1080"
+	urlParams += "&viewport_height=1080&viewport_width=1920&viewport_size=1920x1080"
+	urlParams += "&color_depth=24&pixel_ratio=1"
+	urlParams += "&current_url=" + url_pkg.QueryEscape(chatURL)
+	urlParams += "&pathname=" + url_pkg.QueryEscape(pathname)
+	urlParams += "&search=&hash="
+	urlParams += "&host=chat.z.ai&hostname=chat.z.ai"
+	urlParams += "&protocol=https%3A&referrer="
+	urlParams += "&title=" + url_pkg.QueryEscape("Z.ai - Free AI Chatbot & Agent powered by GLM-5 & GLM-4.7")
+	urlParams += "&timezone_offset=-480"
+	urlParams += "&local_time=" + url_pkg.QueryEscape(time.Now().UTC().Format("2006-01-02T15:04:05.000Z"))
+	urlParams += "&utc_time=" + url_pkg.QueryEscape(time.Now().UTC().Format(time.RFC1123))
+	urlParams += "&is_mobile=false&is_touch=false&max_touch_points=0"
+	urlParams += "&browser_name=Chrome&os_name=Mac+OS"
+	urlParams += fmt.Sprintf("&signature_timestamp=%d", timestamp)
+	url := urlParams
 
 	if targetModel == "glm-4.5v" || targetModel == "glm-4.6v" || targetModel == "glm-5v" {
 		autoWebSearch = false
 	}
 
-	var flags []string
+	flags := []string{}
 
 	var mcpServers []string
 	if targetModel == "glm-4.6v" {
@@ -180,7 +272,6 @@ func makeUpstreamRequest(token string, messages []Message, model string, tools [
 			"auto_web_search":  autoWebSearch,
 			"preview_mode":     enableThinking,
 			"flags":            flags,
-			"enable_thinking":  enableThinking,
 		},
 		"variables": map[string]interface{}{
 			"{{USER_NAME}}":         payload.Email,
@@ -215,6 +306,9 @@ func makeUpstreamRequest(token string, messages []Message, model string, tools [
 
 	bodyBytes, _ := json.Marshal(body)
 
+	LogDebug("[Upstream] Request URL: %s", url)
+	LogDebug("[Upstream] Request body: %s", string(bodyBytes))
+
 	req, err := http.NewRequest("POST", url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, "", err
@@ -227,7 +321,8 @@ func makeUpstreamRequest(token string, messages []Message, model string, tools [
 	req.Header.Set("Connection", "keep-alive")
 	req.Header.Set("Origin", "https://chat.z.ai")
 	req.Header.Set("Referer", fmt.Sprintf("https://chat.z.ai/c/%s", uuid.New().String()))
-	req.Header.Set("User-Agent", uarand.GetRandom())
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+	req.Header.Set("Cookie", "token="+token)
 
 	req.GetBody = func() (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(bodyBytes)), nil
@@ -236,6 +331,11 @@ func makeUpstreamRequest(token string, messages []Message, model string, tools [
 	resp, err := DoRequestWithRetry(req)
 	if err != nil {
 		return nil, "", err
+	}
+
+	LogDebug("[Upstream] Response status: %d", resp.StatusCode)
+	for k, v := range resp.Header {
+		LogDebug("[Upstream] Response header: %s: %s", k, v)
 	}
 
 	return resp, targetModel, nil

@@ -24,10 +24,7 @@ func GenerateSignature(userID, requestID, userContent string, timestamp int64) s
 	firstHmac := hmacSha256Hex([]byte("key-@@@@)))()((9))-xxxx&&&%%%%%"), fmt.Sprintf("%d", period))
 	signature := hmacSha256Hex([]byte(firstHmac), signData)
 
-	// LogDebug("[Signature] requestInfo=%s", requestInfo)
-	// LogDebug("[Signature] userContent=%s", userContent)
-	// LogDebug("[Signature] timestamp=%d", timestamp)
-	// LogDebug("[Signature] signature=%s", signature)
+	LogDebug("[Signature] period=%d, firstHmac=%s, signature=%s", period, firstHmac, signature)
 
 	return signature
 }
