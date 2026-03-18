@@ -828,8 +828,9 @@ async function makeUpstreamRequest(token: string, messages: Message[], model: st
   const url = `https://chat.z.ai/api/v2/chat/completions?timestamp=${timestamp}&requestId=${requestID}&user_id=${userID}&version=0.0.1&platform=web&token=${token}&current_url=https://chat.z.ai/c/${chatID}&pathname=/c/${chatID}&signature_timestamp=${timestamp}`;
 
   const { enableThinking, enableSearch, enableDeepSearch } = parseModelName(model);
-  let autoWebSearch = enableSearch;
-  if (targetModel === "glm-4.5v" || targetModel === "glm-4.6v") autoWebSearch = false;
+  let autoWebSearch = true; // 智能搜索：始终开启，让模型自行判断是否需要搜索
+  const webSearch = enableSearch; // 强制搜索：仅 -search / -deepsearch 模型开启
+  if (targetModel === "glm-4.5v" || targetModel === "glm-4.6v" || targetModel === "glm-5v") autoWebSearch = false;
 
   const flags: string[] = [];
 
@@ -879,7 +880,7 @@ async function makeUpstreamRequest(token: string, messages: Message[], model: st
     extra: {},
     features: {
       image_generation: false,
-      web_search: false,
+      web_search: webSearch,
       auto_web_search: autoWebSearch,
       preview_mode: enableThinking,
       flags,

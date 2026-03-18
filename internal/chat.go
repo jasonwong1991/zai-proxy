@@ -106,7 +106,8 @@ func makeUpstreamRequest(token string, messages []Message, model string, tools [
 	messages = mergeSystemMessages(messages)
 
 	enableThinking := IsThinkingModel(model)
-	autoWebSearch := IsSearchModel(model)
+	webSearch := IsSearchModel(model)      // 强制搜索：仅 -search / -deepsearch 模型开启
+	autoWebSearch := true                  // 智能搜索：始终开启，让模型自行判断是否需要搜索
 	enableDeepSearch := IsDeepSearchModel(model)
 
 	signature := GenerateSignature(userID, requestID, latestUserContent, timestamp)
@@ -117,7 +118,7 @@ func makeUpstreamRequest(token string, messages []Message, model string, tools [
 		fmt.Sprintf("/c/%s", chatID),
 		timestamp)
 
-	if targetModel == "glm-4.5v" || targetModel == "glm-4.6v" {
+	if targetModel == "glm-4.5v" || targetModel == "glm-4.6v" || targetModel == "glm-5v" {
 		autoWebSearch = false
 	}
 
@@ -175,7 +176,7 @@ func makeUpstreamRequest(token string, messages []Message, model string, tools [
 		"extra":            map[string]interface{}{},
 		"features": map[string]interface{}{
 			"image_generation": false,
-			"web_search":       false,
+			"web_search":       webSearch,
 			"auto_web_search":  autoWebSearch,
 			"preview_mode":     enableThinking,
 			"flags":            flags,
