@@ -86,7 +86,8 @@ func UploadImageFromURL(token string, imageURL string) (*UpstreamFile, error) {
 		filename = uuid.New().String()[:12] + ext
 	} else {
 		// 从 URL 下载图片
-		resp, err := http.Get(imageURL)
+		dlClient := NewBrowserHTTPClient()
+		resp, err := dlClient.Get(imageURL)
 		if err != nil {
 			return nil, fmt.Errorf("failed to download image: %v", err)
 		}
@@ -142,8 +143,17 @@ func UploadImageFromURL(token string, imageURL string) (*UpstreamFile, error) {
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("Origin", "https://chat.z.ai")
 	req.Header.Set("Referer", "https://chat.z.ai/")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+	req.Header.Set("Sec-Ch-Ua", `"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"`)
+	req.Header.Set("Sec-Ch-Ua-Mobile", "?0")
+	req.Header.Set("Sec-Ch-Ua-Platform", `"macOS"`)
+	req.Header.Set("Sec-Fetch-Dest", "empty")
+	req.Header.Set("Sec-Fetch-Mode", "cors")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
 
-	client := &http.Client{}
+	client := NewBrowserHTTPClient()
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload image: %v", err)

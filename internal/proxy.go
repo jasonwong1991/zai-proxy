@@ -164,12 +164,12 @@ func (t *ProxyTicket) ProxyHost() string {
 
 func AcquireHTTPClient() (*http.Client, *ProxyTicket) {
 	if proxyPool == nil {
-		return &http.Client{}, nil
+		return NewBrowserHTTPClient(), nil
 	}
 
 	node, err := proxyPool.nextHealthy()
 	if err != nil {
-		return &http.Client{}, nil
+		return NewBrowserHTTPClient(), nil
 	}
 
 	transport := &http.Transport{
