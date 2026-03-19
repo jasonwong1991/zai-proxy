@@ -140,8 +140,7 @@ func createChat(token, model, msgID, content string, enableThinking, autoWebSear
 	req.Header.Set("Sec-Fetch-Mode", "cors")
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 
-	client := NewBrowserHTTPClient()
-	resp, err := client.Do(req)
+	resp, err := DoRequestWithRetry(req)
 	if err != nil {
 		return "", err
 	}

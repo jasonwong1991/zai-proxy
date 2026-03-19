@@ -28,8 +28,7 @@ func GetAnonymousToken() (string, error) {
 	req.Header.Set("Origin", "https://chat.z.ai")
 	req.Header.Set("Referer", "https://chat.z.ai/")
 
-	client := NewBrowserHTTPClient()
-	resp, err := client.Do(req)
+	resp, err := DoRequestWithRetry(req)
 	if err != nil {
 		return "", err
 	}

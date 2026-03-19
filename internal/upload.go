@@ -86,8 +86,11 @@ func UploadImageFromURL(token string, imageURL string) (*UpstreamFile, error) {
 		filename = uuid.New().String()[:12] + ext
 	} else {
 		// 从 URL 下载图片
-		dlClient := NewBrowserHTTPClient()
-		resp, err := dlClient.Get(imageURL)
+		dlReq, err := http.NewRequest("GET", imageURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create download request: %v", err)
+		}
+		resp, err := DoRequestWithRetry(dlReq)
 		if err != nil {
 			return nil, fmt.Errorf("failed to download image: %v", err)
 		}
@@ -153,8 +156,7 @@ func UploadImageFromURL(token string, imageURL string) (*UpstreamFile, error) {
 	req.Header.Set("Sec-Fetch-Mode", "cors")
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 
-	client := NewBrowserHTTPClient()
-	resp, err := client.Do(req)
+	resp, err := DoRequestWithRetry(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload image: %v", err)
 	}

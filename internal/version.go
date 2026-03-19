@@ -37,8 +37,7 @@ func fetchFeVersion() {
 	req.Header.Set("Sec-Fetch-User", "?1")
 	req.Header.Set("Upgrade-Insecure-Requests", "1")
 
-	client := NewBrowserHTTPClient()
-	resp, err := client.Do(req)
+	resp, err := DoRequestWithRetry(req)
 	if err != nil {
 		LogError("Failed to fetch fe version: %v", err)
 		return
