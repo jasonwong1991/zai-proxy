@@ -397,16 +397,17 @@ type ThinkingFilter struct {
 func (f *ThinkingFilter) ProcessThinking(deltaContent string) string {
 	if !f.hasSeenFirstThinking {
 		f.hasSeenFirstThinking = true
+		// 兼容新旧格式：新格式直接返回纯文本，旧格式用 "> " 引用包裹
 		if idx := strings.Index(deltaContent, "> "); idx != -1 {
 			deltaContent = deltaContent[idx+2:]
-		} else {
-			return ""
 		}
+		// 不再因为没有 "> " 前缀就丢弃内容
 	}
 
 	content := f.buffer + deltaContent
 	f.buffer = ""
 
+	// 兼容旧格式：去除 markdown 引用前缀
 	content = strings.ReplaceAll(content, "\n> ", "\n")
 
 	if strings.HasSuffix(content, "\n>") {
