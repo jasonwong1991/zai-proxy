@@ -182,7 +182,7 @@ func makeUpstreamRequest(token string, messages []Message, model string, tools [
 
 	enableThinking := IsThinkingModel(model)
 	webSearch := IsSearchModel(model)      // 强制搜索：仅 -search / -deepsearch 模型开启
-	autoWebSearch := false                 // 前端默认 false，让模型自行判断
+	autoWebSearch := true                  // 默认开启自动搜索
 	enableDeepSearch := IsDeepSearchModel(model)
 
 	// 创建会话：z.ai 要求 chat_id 必须先通过 /api/v1/chats/new 创建
@@ -1033,15 +1033,14 @@ func HandleModels(w http.ResponseWriter, r *http.Request) {
 	var models []ModelInfo
 	for _, id := range ModelList {
 		// 解析模型能力
-		baseModel, hasThinking, hasSearch, _ := ParseModelName(id)
-		isVisionModel := strings.Contains(baseModel, "-V")
+		_, hasThinking, hasSearch, _ := ParseModelName(id)
 
 		models = append(models, ModelInfo{
 			ID:      id,
 			Object:  "model",
 			OwnedBy: "z.ai",
 			Capabilities: Capabilities{
-				Vision:   isVisionModel,
+				Vision:   true, // 所有模型都支持视觉
 				Search:   hasSearch,
 				Thinking: hasThinking,
 			},
