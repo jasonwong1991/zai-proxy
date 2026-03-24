@@ -258,9 +258,16 @@ type ModelsResponse struct {
 }
 
 type ModelInfo struct {
-	ID      string `json:"id"`
-	Object  string `json:"object"`
-	OwnedBy string `json:"owned_by"`
+	ID           string       `json:"id"`
+	Object       string       `json:"object"`
+	OwnedBy      string       `json:"owned_by"`
+	Capabilities Capabilities `json:"capabilities"`
+}
+
+type Capabilities struct {
+	Vision   bool `json:"vision"`
+	Search   bool `json:"search"`
+	Thinking bool `json:"thinking"`
 }
 
 // Anthropic request types

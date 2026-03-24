@@ -1032,10 +1032,19 @@ func handleNonStreamResponse(w http.ResponseWriter, body io.ReadCloser, completi
 func HandleModels(w http.ResponseWriter, r *http.Request) {
 	var models []ModelInfo
 	for _, id := range ModelList {
+		// 解析模型能力
+		baseModel, hasThinking, hasSearch, _ := ParseModelName(id)
+		isVisionModel := strings.Contains(baseModel, "-V")
+
 		models = append(models, ModelInfo{
 			ID:      id,
 			Object:  "model",
 			OwnedBy: "z.ai",
+			Capabilities: Capabilities{
+				Vision:   isVisionModel,
+				Search:   hasSearch,
+				Thinking: hasThinking,
+			},
 		})
 	}
 
