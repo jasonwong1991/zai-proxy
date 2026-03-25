@@ -1,13 +1,35 @@
 services:
+  warp:
+    image: caomingjun/warp
+    container_name: warp
+    restart: always
+    device_cgroup_rules:
+      - 'c 10:200 rwm'
+    environment:
+      - WARP_SLEEP=2
+      # - WARP_LICENSE_KEY= # optional
+    cap_add:
+      - MKNOD
+      - AUDIT_WRITE
+      - NET_ADMIN
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+      - net.ipv4.conf.all.src_valid_mark=1
+    volumes:
+      - ./data/warp:/var/lib/cloudflare-warp
+
   zai-proxy:
     image: ghcr.io/jasonwong1991/zai-proxy:latest
     container_name: zai-proxy
     restart: unless-stopped
+    depends_on:
+      - warp
     ports:
       - "8084:8084"
     environment:
       - PORT=8084
       - LOG_LEVEL=info
-      - PROXY_FILE=/app/proxies.txt
-    volumes:
-      - ./proxies.txt:/app/proxies.txt:ro
+      - WARP_PROXY=socks5://warp:1080
+      # - PROXY_FILE=/app/proxies.txt  # optional: additional proxies
+    # volumes:
+    #   - ./proxies.txt:/app/proxies.txt:ro  # uncomment if using custom proxies

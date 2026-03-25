@@ -47,20 +47,37 @@ type ProxyTicket struct {
 
 func InitProxyPool() {
 	proxyPoolOnce.Do(func() {
-		filePath := os.Getenv("PROXY_FILE")
-		if filePath == "" {
-			LogInfo("PROXY_FILE not set, proxy pool disabled")
+		var nodes []*proxyNode
+
+		// 1. 内置 WARP 代理
+		if warpProxy := os.Getenv("WARP_PROXY"); warpProxy != "" {
+			parsed, err := url.Parse(warpProxy)
+			if err == nil && parsed.Host != "" {
+				nodes = append(nodes, &proxyNode{url: parsed})
+				LogInfo("WARP proxy added: %s", parsed.Host)
+			} else {
+				LogWarn("Invalid WARP_PROXY: %q", warpProxy)
+			}
+		}
+
+		// 2. 用户自定义代理文件
+		if filePath := os.Getenv("PROXY_FILE"); filePath != "" {
+			fileNodes, err := loadProxyFile(filePath)
+			if err != nil {
+				LogError("Failed to load proxy file: %v", err)
+			} else {
+				nodes = append(nodes, fileNodes...)
+				LogInfo("Loaded %d proxies from %s", len(fileNodes), filePath)
+			}
+		}
+
+		if len(nodes) == 0 {
+			LogInfo("No proxy configured, direct connection")
 			return
 		}
 
-		pool, err := newProxyPool(filePath)
-		if err != nil {
-			LogError("Failed to init proxy pool: %v", err)
-			return
-		}
-
-		proxyPool = pool
-		LogInfo("Proxy pool enabled with %d nodes", len(pool.nodes))
+		proxyPool = &ProxyPool{nodes: nodes}
+		LogInfo("Proxy pool enabled with %d nodes", len(nodes))
 	})
 }
 
@@ -68,7 +85,7 @@ func ProxyEnabled() bool {
 	return proxyPool != nil && len(proxyPool.nodes) > 0
 }
 
-func newProxyPool(filePath string) (*ProxyPool, error) {
+func loadProxyFile(filePath string) ([]*proxyNode, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("open proxy file: %w", err)
@@ -110,11 +127,7 @@ func newProxyPool(filePath string) (*ProxyPool, error) {
 		return nil, fmt.Errorf("scan proxy file: %w", err)
 	}
 
-	if len(nodes) == 0 {
-		return nil, errors.New("no valid proxy nodes found")
-	}
-
-	return &ProxyPool{nodes: nodes}, nil
+	return nodes, nil
 }
 
 func (p *ProxyPool) nextHealthy() (*proxyNode, error) {
