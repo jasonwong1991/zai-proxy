@@ -181,7 +181,7 @@ func makeUpstreamRequest(token string, messages []Message, model string, tools [
 	messages = mergeSystemMessages(messages)
 
 	enableThinking := IsThinkingModel(model)
-	webSearch := IsSearchModel(model)      // 强制搜索：仅 -search / -deepsearch 模型开启
+	webSearch := false                     // web_search 永远 false，搜索由 auto_web_search 控制
 	autoWebSearch := true                  // 默认开启自动搜索
 	enableDeepSearch := IsDeepSearchModel(model)
 
@@ -281,6 +281,7 @@ func makeUpstreamRequest(token string, messages []Message, model string, tools [
 			"web_search":       webSearch,
 			"auto_web_search":  autoWebSearch,
 			"preview_mode":     enableThinking,
+			"enable_thinking":  enableThinking,
 			"flags":            flags,
 		},
 		"variables": map[string]interface{}{
@@ -562,7 +563,10 @@ func handleStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionI
 			break
 		}
 
+		LogDebug("[Stream] phase=%q delta_content=%q (len=%d)", upstream.Data.Phase, upstream.Data.DeltaContent, len(upstream.Data.DeltaContent))
+
 		if upstream.Data.Phase == "thinking" && upstream.Data.DeltaContent != "" {
+			LogDebug("[Thinking] IN: %q | hasSeenFirst=%v lastPhase=%q roundCount=%d", upstream.Data.DeltaContent, thinkingFilter.hasSeenFirstThinking, thinkingFilter.lastPhase, thinkingFilter.thinkingRoundCount)
 			isNewThinkingRound := false
 			if thinkingFilter.lastPhase != "" && thinkingFilter.lastPhase != "thinking" {
 				thinkingFilter.ResetForNewRound()
@@ -572,6 +576,7 @@ func handleStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionI
 			thinkingFilter.lastPhase = "thinking"
 
 			reasoningContent := thinkingFilter.ProcessThinking(upstream.Data.DeltaContent)
+			LogDebug("[Thinking] ProcessThinking OUT: %q (len=%d)", reasoningContent, len(reasoningContent))
 
 			if isNewThinkingRound && thinkingFilter.thinkingRoundCount > 1 && reasoningContent != "" {
 				reasoningContent = "\n\n" + reasoningContent
@@ -579,7 +584,9 @@ func handleStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionI
 
 			if reasoningContent != "" {
 				thinkingFilter.lastOutputChunk = reasoningContent
+				beforeSearchFilter := reasoningContent
 				reasoningContent = searchRefFilter.Process(reasoningContent)
+				LogDebug("[Thinking] searchRefFilter: %q -> %q", beforeSearchFilter, reasoningContent)
 
 				if reasoningContent != "" {
 					hasContent = true
@@ -595,9 +602,12 @@ func handleStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionI
 						}},
 					}
 					data, _ := json.Marshal(chunk)
+					LogDebug("[Thinking] EMIT reasoning chunk: %s", string(data))
 					fmt.Fprintf(w, "data: %s\n\n", data)
 					flusher.Flush()
 				}
+			} else {
+				LogDebug("[Thinking] ProcessThinking returned empty, content dropped")
 			}
 			continue
 		}
