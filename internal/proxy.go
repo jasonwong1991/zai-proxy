@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	proxyCooldown = 60 * time.Second
-	maxRetries    = 3
+	proxyCooldown    = 60 * time.Second
+	proxy405Cooldown = 24 * time.Hour
+	maxRetries       = 3
 )
 
 var (
@@ -145,12 +146,26 @@ func (p *ProxyPool) nextHealthy() (*proxyNode, error) {
 		}
 	}
 
+	// 所有代理都被禁用且有多个代理时，全部重置重头来过
+	if n > 1 {
+		LogWarn("All %d proxies are banned, resetting all", n)
+		for _, node := range p.nodes {
+			node.unhealthyUntil.Store(0)
+		}
+		idx := int(start) % n
+		return p.nodes[idx], nil
+	}
+
 	return nil, ErrNoHealthyProxy
 }
 
+func (p *ProxyPool) markUnhealthyFor(node *proxyNode, d time.Duration, err error) {
+	node.unhealthyUntil.Store(time.Now().Add(d).UnixMilli())
+	LogWarn("Proxy %s marked unhealthy (cooldown %s): %v", node.url.Host, d, err)
+}
+
 func (p *ProxyPool) markUnhealthy(node *proxyNode, err error) {
-	node.unhealthyUntil.Store(time.Now().Add(proxyCooldown).UnixMilli())
-	LogWarn("Proxy %s marked unhealthy (cooldown %s): %v", node.url.Host, proxyCooldown, err)
+	p.markUnhealthyFor(node, proxyCooldown, err)
 }
 
 func (p *ProxyPool) markHealthy(node *proxyNode) {
@@ -166,6 +181,14 @@ func (t *ProxyTicket) Report(err error) {
 	} else {
 		t.pool.markHealthy(t.node)
 	}
+}
+
+// ReportBan 将代理标记为禁用指定时长（用于 405 等需要长时间禁用的场景）
+func (t *ProxyTicket) ReportBan(d time.Duration) {
+	if t == nil || t.pool == nil || t.node == nil {
+		return
+	}
+	t.pool.markUnhealthyFor(t.node, d, fmt.Errorf("HTTP 405 banned"))
 }
 
 func (t *ProxyTicket) ProxyHost() string {
@@ -210,6 +233,18 @@ func DoRequestWithRetry(req *http.Request) (*http.Response, error) {
 					ticket.ProxyHost(), i+1, maxRetries, err)
 			}
 
+			if req.GetBody != nil {
+				req.Body, _ = req.GetBody()
+			}
+			continue
+		}
+
+		// 多代理场景下，z.ai 返回 405 则禁用该代理 24 小时并换下一个重试
+		if resp.StatusCode == http.StatusMethodNotAllowed && ticket != nil && len(proxyPool.nodes) > 1 {
+			resp.Body.Close()
+			ticket.ReportBan(proxy405Cooldown)
+			LogWarn("Proxy %s got 405 from z.ai, banned for %s (attempt %d/%d)",
+				ticket.ProxyHost(), proxy405Cooldown, i+1, maxRetries)
 			if req.GetBody != nil {
 				req.Body, _ = req.GetBody()
 			}
