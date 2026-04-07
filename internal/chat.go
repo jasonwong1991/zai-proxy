@@ -220,7 +220,7 @@ func makeUpstreamRequest(token string, messages []Message, model string, tools [
 	urlParams += fmt.Sprintf("&signature_timestamp=%d", timestamp)
 	url := urlParams
 
-	if targetModel == "glm-4.5v" || targetModel == "glm-4.6v" || targetModel == "glm-5v" {
+	if targetModel == "glm-4.5v" || targetModel == "glm-4.6v" || targetModel == "glm-5v" || targetModel == "GLM-5V-Turbo" {
 		autoWebSearch = false
 	}
 
