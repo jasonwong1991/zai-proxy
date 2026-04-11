@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,9 +15,8 @@ import (
 )
 
 const (
-	proxyCooldown    = 60 * time.Second
-	proxy405Cooldown = 24 * time.Hour
-	maxRetries       = 3
+	proxyCooldown = 60 * time.Second
+	maxRetries    = 3
 )
 
 var (
@@ -31,9 +31,18 @@ type proxyNode struct {
 	unhealthyUntil atomic.Int64
 }
 
+// permanentBan is a sentinel value meaning "banned until all proxies exhausted".
+const permanentBan int64 = math.MaxInt64
+
 func (n *proxyNode) isHealthy() bool {
 	until := n.unhealthyUntil.Load()
-	return until == 0 || time.Now().UnixMilli() >= until
+	if until == 0 {
+		return true
+	}
+	if until == permanentBan {
+		return false // permanent ban, never auto-recovers
+	}
+	return time.Now().UnixMilli() >= until
 }
 
 type ProxyPool struct {
@@ -183,12 +192,13 @@ func (t *ProxyTicket) Report(err error) {
 	}
 }
 
-// ReportBan 将代理标记为禁用指定时长（用于 405 等需要长时间禁用的场景）
-func (t *ProxyTicket) ReportBan(d time.Duration) {
+// ReportBan 将代理永久禁用（用于 405 等场景），直到所有代理耗尽时才全部重置
+func (t *ProxyTicket) ReportBan() {
 	if t == nil || t.pool == nil || t.node == nil {
 		return
 	}
-	t.pool.markUnhealthyFor(t.node, d, fmt.Errorf("HTTP 405 banned"))
+	t.node.unhealthyUntil.Store(permanentBan)
+	LogWarn("Proxy %s permanently banned (HTTP 405)", t.node.url.Host)
 }
 
 func (t *ProxyTicket) ProxyHost() string {
@@ -239,12 +249,12 @@ func DoRequestWithRetry(req *http.Request) (*http.Response, error) {
 			continue
 		}
 
-		// 多代理场景下，z.ai 返回 405 则禁用该代理 24 小时并换下一个重试
+		// 多代理场景下，z.ai 返回 405 则永久禁用该代理并换下一个重试
 		if resp.StatusCode == http.StatusMethodNotAllowed && ticket != nil && len(proxyPool.nodes) > 1 {
 			resp.Body.Close()
-			ticket.ReportBan(proxy405Cooldown)
-			LogWarn("Proxy %s got 405 from z.ai, banned for %s (attempt %d/%d)",
-				ticket.ProxyHost(), proxy405Cooldown, i+1, maxRetries)
+			ticket.ReportBan()
+			LogWarn("Proxy %s got 405 from z.ai, permanently banned (attempt %d/%d)",
+				ticket.ProxyHost(), i+1, maxRetries)
 			if req.GetBody != nil {
 				req.Body, _ = req.GetBody()
 			}

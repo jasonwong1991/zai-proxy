@@ -15,7 +15,7 @@ import (
 // 基础模型映射（不包含标签后缀）
 var BaseModelMapping = map[string]string{
 	"GLM-5":         "glm-5",
-	"GLM-5.1":       "glm-5.1",
+	"GLM-5.1":       "GLM-5.1",
 	"GLM-5-Turbo":   "GLM-5-Turbo",
 	"GLM-4.7":       "glm-4.7",
 	"GLM-4.5":       "0727-360B-API",
